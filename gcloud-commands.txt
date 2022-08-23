@@ -1,0 +1,118 @@
+
+
+# create service A service account
+➜  ~ gcloud iam service-accounts create cr-service-a
+Created service account [cr-service-a].
+
+
+
+# create service B service account
+➜  ~ gcloud iam service-accounts create cr-service-b
+Created service account [cr-service-b].
+
+
+
+# list the service accounts
+➜  ~ gcloud iam service-accounts list
+DISPLAY NAME      EMAIL                                                     DISABLED
+                  cr-service-a@learning-gcp-360307.iam.gserviceaccount.com  False
+                  cr-service-b@learning-gcp-360307.iam.gserviceaccount.com  False
+
+
+
+# create an artifacts repository, basically cloud storage place to store docker images
+➜  ~ gcloud artifacts repositories create docker-repo --repository-format=docker --location=australia-southeast1
+Create request issued for: [docker-repo]
+Waiting for operation [projects/learning-gcp-360307/locations/australia-southeast1/operations/afeebdc1-2cc8-462b-9257-d9e3db720f21] to complete...done.
+Created repository [docker-repo].
+
+
+
+# list it
+➜  ~ gcloud artifacts repositories list
+Listing items under project learning-gcp-360307, across all locations.
+
+                                                                     ARTIFACT_REGISTRY
+REPOSITORY   FORMAT  MODE                 DESCRIPTION  LOCATION              LABELS  ENCRYPTION          CREATE_TIME          UPDATE_TIME          SIZE (MB)
+docker-repo  DOCKER  STANDARD_REPOSITORY               australia-southeast1          Google-managed key  2022-08-23T22:26:54  2022-08-23T22:26:54  0
+
+
+
+# create service a docker image
+➜  cr-auth-example git:(main) gcloud builds submit \
+  --region=australia-southeast1 \
+  --config ./service-a.cloudbuild.yaml
+** didn't inclue output **
+
+
+
+# create service b docker image
+➜  cr-auth-example git:(main) gcloud builds submit \
+  --region=australia-southeast1 \
+  --config ./service-b.cloudbuild.yaml
+** didn't inclue output **
+
+
+
+# list the docker images
+➜  cr-auth-example git:(main) gcloud artifacts docker images list australia-southeast1-docker.pkg.dev/learning-gcp-360307/docker-repo
+Listing items under project learning-gcp-360307, location australia-southeast1, repository docker-repo.
+
+IMAGE                                                                          DIGEST                                                                   CREATE_TIME          UPDATE_TIME
+australia-southeast1-docker.pkg.dev/learning-gcp-360307/docker-repo/service-a  sha256:a4bc0f3ecf4a4c077e8650c54380a683fa7f21b444af50b05c404dce66691831  2022-08-23T22:37:22  2022-08-23T22:37:22
+australia-southeast1-docker.pkg.dev/learning-gcp-360307/docker-repo/service-b  sha256:c0d1c9562346cc6c064322ad56447ae450beee0ebdfea130242bda6f6ae47dfa  2022-08-23T22:40:39  2022-08-23T22:40:39
+
+
+
+# deploy are protected service a
+➜  cr-auth-example git:(main) gcloud run deploy \
+  --image australia-southeast1-docker.pkg.dev/learning-gcp-360307/docker-repo/service-a \
+  --region australia-southeast1 \
+  --no-allow-unauthenticated \
+  --service-account cr-service-a@learning-gcp-360307.iam.gserviceaccount.com \
+  service-a
+Deploying container to Cloud Run service [service-a] in project [learning-gcp-360307] region [australia-southeast1]
+✓ Deploying new service... Done.
+  ✓ Creating Revision...
+  ✓ Routing traffic...
+Done.
+Service [service-a] revision [service-a-00001-keq] has been deployed and is serving 100 percent of traffic.
+Service URL: https://service-a-z2y5hcmzha-ts.a.run.app
+
+
+
+# add iam policy to allow service b service account to call service A
+➜  cr-auth-example git:(main) gcloud run services add-iam-policy-binding service-a \
+  --member='serviceAccount:cr-service-b@learning-gcp-360307.iam.gserviceaccount.com' \
+  --role='roles/run.invoker'
+Updated IAM policy for service [service-a].
+bindings:
+- members:
+  - serviceAccount:cr-service-b@learning-gcp-360307.iam.gserviceaccount.com
+  role: roles/run.invoker
+etag: BwXm6a1fiWE=
+version: 1
+
+
+
+# deploy service b
+➜  cr-auth-example git:(main) gcloud run deploy \
+  --image australia-southeast1-docker.pkg.dev/learning-gcp-360307/docker-repo/service-b \
+  --region australia-southeast1 \
+  --allow-unauthenticated \
+  --service-account cr-service-b@learning-gcp-360307.iam.gserviceaccount.com \
+  --set-env-vars=SERVICE_A_URL=https://service-a-z2y5hcmzha-ts.a.run.app \
+  service-b
+Deploying container to Cloud Run service [service-b] in project [learning-gcp-360307] region [australia-southeast1]
+✓ Deploying new service... Done.
+  ✓ Creating Revision...
+  ✓ Routing traffic...
+  ✓ Setting IAM Policy...
+Done.
+Service [service-b] revision [service-b-00001-yet] has been deployed and is serving 100 percent of traffic.
+Service URL: https://service-b-z2y5hcmzha-ts.a.run.app
+
+# test
+➜  cr-auth-example git:(main) time curl https://service-b-z2y5hcmzha-ts.a.run.app/
+{"name":"service-b","result":{"name":"service-a"}}
+0.01s user 0.00s system 2% cpu 0.489 total
